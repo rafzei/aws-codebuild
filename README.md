@@ -202,3 +202,10 @@ Current action provides a set of outputs, that you can use in the next steps:
   * `STOPPED`: The build stopped.
   * `SUCCEEDED`: The build succeeded.
   * `TIMED_OUT`: The build timed out.
+
+## Development
+
+How to build:
+
+npm install @vercel/ncc
+npm run compile

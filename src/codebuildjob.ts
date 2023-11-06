@@ -9,7 +9,6 @@ import {
   BuildPhaseType,
   BuildBatchPhaseType,
   Builds,
-  BuildBatches,
   LogsLocation,
   StartBuildInput,
   Build,
@@ -87,15 +86,10 @@ class CodeBuildJob {
     try {
 
       const { projectName } = this.params;
-      console.log(`Starting "${projectName}" CodeBuild project batch job`);
-
       core.info(`Starting "${projectName}" CodeBuild project batch job`);
       debug('[CodeBuildJob] Doing request CodeBuild.startBuildBatch() with parameters', this.params);
-      console.log('[CodeBuildJob] Doing request CodeBuild.startBuildBatch() with parameters', this.params);
-      // Use the `startBuildBatch` method to start the build.
       const startBuildBatchOutput = await this.client.startBuildBatch(this.params).promise();
       debug('[CodeBuildJob] Received response from CodeBuild.startBuildBatch() request', startBuildBatchOutput);
-      console.log('[CodeBuildJob] Received response from CodeBuild.startBuildBatch() request', startBuildBatchOutput);
 
       if (!startBuildBatchOutput ?? !startBuildBatchOutput.buildBatch) {
         throw new Error(`Can't start ${projectName} CodeBuild job. Empty response from AWS API Endpoint`);
@@ -110,9 +104,12 @@ class CodeBuildJob {
       }
       const { buildBatch } = startBuildBatchOutput;
       this.buildBatch = buildBatch;
-      console.log(`buildBatch ${buildBatch}`);
 
       core.info(`CodeBuild project batch job ${buildBatch.id} was started successfully`);
+      core.info(`For batch build waitToBuildEnd and displayBuildLogs are forced to false`);
+
+      this.options.displayBuildLogs = false;
+      this.options.waitToBuildEnd = false;
 
       // If we don't need to wait until AWS CodeBuild will be finished, skip logs registering and build status checks
       if (!this.options.waitToBuildEnd) {
@@ -146,7 +143,6 @@ class CodeBuildJob {
       }
 
       await this.waitBatch();
-      console.log("After starting build batch");
 
     } catch (error) {
       console.error("Error in startBuildBatch:", error);
@@ -247,17 +243,10 @@ class CodeBuildJob {
     debug('[CodeBuildJob] Doing request to the CodeBuild.batchGetBuilds() with parameters:', request);
     const response = await this.client.batchGetBuilds(request).promise() as BatchGetBuildsOutput;
     debug('[CodeBuildJob] Received response from CodeBuild.batchGetBuilds() call:', response);
-    console.log(`response:`, JSON.stringify(response, null, 2));
 
     const { builds } = response;
-    console.log(`builds: ${builds}`);
-
     const build = (builds as Builds).at(0) as Build;
-    console.log(`build: ${build}`);
-
     const { currentPhase, buildStatus } = build;
-    console.log(`currentPhase: ${currentPhase}`);
-    console.log(`buildStatus: ${buildStatus}`);
 
     const phasesWithoutLogs: BuildPhaseType[] = ['SUBMITTED', 'QUEUED', 'PROVISIONING'];
     if (!phasesWithoutLogs.includes(currentPhase as BuildPhaseType)) {
@@ -316,16 +305,13 @@ class CodeBuildJob {
     console.log(`response:`, JSON.stringify(response, null, 2));
     debug('[CodeBuildJob] Received response from CodeBuild.batchGetBuildBatches() call:', response);
 
-    const { buildBatches } = response;
-    console.log(`buildBatches: ${buildBatches}`)
+    console.log('buildBatch:', this.buildBatch);
 
-    const buildBatch = (buildBatches as BuildBatches) as BuildBatch;
-    console.log(`buildBatch: ${buildBatch}`)
-    const { currentPhase, buildBatchStatus } = buildBatch;
-    console.log(`currentPhase: ${currentPhase}`)
-    console.log(`buildBatchStatus: ${buildBatchStatus}`)
+    const { currentPhase, buildBatchStatus } = this.buildBatch || {};
+    console.log('currentPhase:', currentPhase);
+    console.log('buildBatchStatus:', buildBatchStatus);
 
-    const phasesWithoutLogs: BuildBatchPhaseType[] = ['SUBMITTED', 'DOWNLOAD_BATCHSPEC'];
+    const phasesWithoutLogs: BuildBatchPhaseType[] = ['SUBMITTED', 'DOWNLOAD_BATCHSPEC', 'undefined'];
     if (!phasesWithoutLogs.includes(currentPhase as BuildBatchPhaseType)) {
       debug('[CodeBuildJob] Starting listening for job logs output');
       this.logger?.start();
@@ -352,14 +338,14 @@ class CodeBuildJob {
       if (buildBatchStatus !== 'IN_PROGRESS') {
         debug('[CodeBuildJob] Composing GitHub Action outputs');
 
-        core.setOutput('id', buildBatch.id);
+        core.setOutput('id', this.buildBatch.id);
         core.setOutput('success', buildBatchStatus === 'SUCCEEDED');
-        core.setOutput('buildNumber', buildBatch.buildBatchNumber);
-        core.setOutput('timeoutInMinutes', buildBatch.buildTimeoutInMinutes);
-        core.setOutput('initiator', buildBatch.initiator);
-        core.setOutput('buildBatchStatus', buildBatch.buildBatchStatus);
+        core.setOutput('buildNumber', this.buildBatch.buildBatchNumber);
+        core.setOutput('timeoutInMinutes', this.buildBatch.buildTimeoutInMinutes);
+        core.setOutput('initiator', this.buildBatch.initiator);
+        core.setOutput('buildBatchStatus', this.buildBatch.buildBatchStatus);
 
-        await this.generateSummaryBatch(buildBatch);
+        await this.generateSummaryBatch(this.buildBatch);
       }
     }
 
@@ -368,7 +354,7 @@ class CodeBuildJob {
       core.info(`Build phase was changed to the "${this.currentPhase}"`);
     }
 
-    if (buildBatch.buildBatchStatus === 'IN_PROGRESS') {
+    if (this.buildBatch.buildBatchStatus === 'IN_PROGRESS') {
       debug('[CodeBuildJob] Scheduling next request to the CodeBuild.batchGetBuildBatches() API');
       this.timeout = setTimeout(this.waitBatch, this.options.buildStatusInterval);
     }
